@@ -142,7 +142,10 @@ fn render_pieces(pieces: &[&mut Piece]) {
                 }
             },
             Kind::Goal => {
-                rendered_board[rendered_rank][rendered_file].appearance = 'X';
+                if rendered_board[rendered_rank][rendered_file].appearance == ' ' {
+                    // Don't render the goal over something else
+                    rendered_board[rendered_rank][rendered_file].appearance = 'X';
+                }
             },
             Kind::Number => {
                 rendered_board[rendered_rank][rendered_file].appearance = (b'0' + (piece.health as u8)) as char;
@@ -178,25 +181,33 @@ fn render_pieces(pieces: &[&mut Piece]) {
     });
 }
 
-fn does_piece_block_square(potential_blocker: &Piece, square: Square) -> bool {
-    match potential_blocker.kind {
-        Kind::B => {
-            (potential_blocker.pos == square) ||
-            (Square {
-                rank: potential_blocker.pos.rank + 1,
-                file: potential_blocker.pos.file,
-            } == square) ||
-            (Square {
-                rank: potential_blocker.pos.rank,
-                file: potential_blocker.pos.file + 1,
-            } == square) ||
-            (Square {
-                rank: potential_blocker.pos.rank + 1,
-                file: potential_blocker.pos.file + 1,
-            } == square)
-        },
-    Kind::Number => potential_blocker.pos == square,
-    Kind::Goal => false,
+fn does_piece_block_square(potential_blocker: &Piece, square: Square, is_big: bool) -> bool {
+    if is_big {
+        // is_big: The square itself has a big hitbox. This is distinct from potential_blocker being a B.
+        does_piece_block_square(potential_blocker, square, false) ||
+        does_piece_block_square(potential_blocker, Square {rank: square.rank + 1, file: square.file}, false) ||
+        does_piece_block_square(potential_blocker, Square {rank: square.rank, file: square.file + 1}, false) ||
+        does_piece_block_square(potential_blocker, Square {rank: square.rank + 1, file: square.file + 1}, false)
+    } else {
+        match potential_blocker.kind {
+            Kind::B => {
+                (potential_blocker.pos == square) ||
+                (Square {
+                    rank: potential_blocker.pos.rank + 1,
+                    file: potential_blocker.pos.file,
+                } == square) ||
+                (Square {
+                    rank: potential_blocker.pos.rank,
+                    file: potential_blocker.pos.file + 1,
+                } == square) ||
+                (Square {
+                    rank: potential_blocker.pos.rank + 1,
+                    file: potential_blocker.pos.file + 1,
+                } == square)
+            },
+            Kind::Number => potential_blocker.pos == square,
+            Kind::Goal => false,
+        }
     }
 }
 
@@ -339,10 +350,10 @@ fn did_player_win(pieces: &[&mut Piece], player: Color) -> bool {
     for piece in pieces {
         if player == piece.color {
             // Only your own pieces count toward your win
-            if does_piece_block_square(piece, goal1) {
+            if does_piece_block_square(piece, goal1, false) {
                 goal1_reached = true;
             }
-            if does_piece_block_square(piece, goal2) {
+            if does_piece_block_square(piece, goal2, false) {
                 goal2_reached = true;
             }
         }
@@ -374,10 +385,10 @@ fn main() {
         Piece {color: Color::Red,   kind: Kind::B,      health: 4, pos: Square {rank: 2, file: 1}, delete: false},
         Piece {color: Color::Red,   kind: Kind::B,      health: 4, pos: Square {rank: 2, file: 7}, delete: false},
     
-        Piece {color: Color::Green, kind: Kind::Number, health: 0, pos: Square {rank: 4, file: 4}, delete: false},
-        Piece {color: Color::Green, kind: Kind::Number, health: 0, pos: Square {rank: 4, file: 5}, delete: false},
-        Piece {color: Color::Green, kind: Kind::Number, health: 0, pos: Square {rank: 5, file: 4}, delete: false},
-        Piece {color: Color::Green, kind: Kind::Number, health: 0, pos: Square {rank: 5, file: 5}, delete: false},
+        Piece {color: Color::Green, kind: Kind::Number, health: 1, pos: Square {rank: 4, file: 4}, delete: false},
+        Piece {color: Color::Green, kind: Kind::Number, health: 1, pos: Square {rank: 4, file: 5}, delete: false},
+        Piece {color: Color::Green, kind: Kind::Number, health: 1, pos: Square {rank: 5, file: 4}, delete: false},
+        Piece {color: Color::Green, kind: Kind::Number, health: 1, pos: Square {rank: 5, file: 5}, delete: false},
     
         Piece {color: Color::Blue,  kind: Kind::Number, health: 1, pos: Square {rank: 9, file: 0}, delete: false},
         Piece {color: Color::Blue,  kind: Kind::Number, health: 2, pos: Square {rank: 9, file: 1}, delete: false},
@@ -422,15 +433,25 @@ fn main() {
         //println!("{:?}", find_possible_moves(&pieces, curr_game_turn));
         if curr_game_turn == HUMAN_PLAYER {
             println!("It's your turn ({})!", curr_game_turn);
+            if find_possible_moves(&pieces, curr_game_turn).is_empty() {
+                println!("You have no legal moves! Your opponent wins!");
+                break 'main_loop;
+            }
             'get_player_input: loop {
                 println!("Move piece at which rank? ");
                 let mut rank_moved = String::new();
                 io::stdin().read_line(&mut rank_moved).expect("Failed to read line");
-                let rank_moved: usize = rank_moved.trim().parse().expect("Not a number");
+                let rank_moved: usize = match rank_moved.trim().parse() {
+                    Ok(num) => num,
+                    Err(_) => continue,
+                };
                 println!("At which file? ");
                 let mut file_moved = String::new();
                 io::stdin().read_line(&mut file_moved).expect("Failed to read line");
-                let file_moved: usize = file_moved.trim().parse().expect("Not a number");
+                let file_moved: usize = match file_moved.trim().parse() {
+                    Ok(num) => num,
+                    Err(_) => continue,
+                };
                 for index in 0..pieces.len() {
                     let piece = &pieces[index];
                     if piece.pos == (Square{rank: rank_moved, file: file_moved}) {
@@ -440,10 +461,6 @@ fn main() {
                             continue 'get_player_input;
                         }
                         let possible_moves = list_possible_moves(&pieces, piece, get_move_directions(piece));
-                        if possible_moves.is_empty() {
-                            println!("You have no legal moves! Your opponent wins!");
-                            break 'main_loop;
-                        }
                         let move_made: &Action;
                         match possible_moves.len() {
                             0 => {
@@ -459,7 +476,11 @@ fn main() {
                                     println!("Which move of {}?", possible_moves.iter().fold(String::new(), |a, &m| a + &m.to_string() + ", "));
                                     let mut index_chosen = String::new();
                                     io::stdin().read_line(&mut index_chosen).expect("Failed to read line");
-                                    let index_chosen: usize = index_chosen.trim().parse().expect("Not a real index");
+                                    let index_chosen: usize = match index_chosen.trim().parse() {
+                                        Ok(num) => num,
+                                        Err(_) => continue,
+                                    };
+                                    
                                     match possible_moves.get(index_chosen) {
                                         Some(i) => {
                                             move_made = i;
@@ -480,7 +501,7 @@ fn main() {
                             Action::Explosion(sq) => {
                                 for offset in &[[-1, -1], [0, -1], [1, -1], [2, -1], [2, 0], [2, 1], [2, 2], [1, 2], [0, 2], [-1, 2], [-1, 1], [-1, 0]] {
                                     for damaged_piece in &mut pieces {
-                                        if damaged_piece.pos == (Square {rank: add_usize_int(sq.rank, offset[0]), file: add_usize_int(sq.file ,offset[1])}) {
+                                        if does_piece_block_square(damaged_piece, Square {rank: add_usize_int(sq.rank, offset[0]), file: add_usize_int(sq.file ,offset[1])}, false) {
                                             damaged_piece.health -= 1;
                                             if damaged_piece.health <= 0 {
                                                 damaged_piece.delete = true;
@@ -498,24 +519,24 @@ fn main() {
                                 // Delete the big that exploded
                                 let piece = &mut pieces[index];
                                 piece.delete = true;
+                                break 'get_player_input;
                             },
                             Action::Move(mv) => {
+                                let big = matches!(pieces[index].kind, Kind::B);
                                 let mut damage = pieces[index].health;
-                                let mut piece_attacked = false;
+                                let mut total_damage = 0;
                                 for attacked_piece in &mut pieces {
-                                    if attacked_piece.pos == mv.end {
+                                    if attacked_piece.color != curr_game_turn && does_piece_block_square(attacked_piece, mv.end, big) {
                                         damage = cmp::min(damage, attacked_piece.health);
-                                        piece_attacked = true;
                                         attacked_piece.health -= damage;
+                                        total_damage += damage;
                                         if attacked_piece.health <= 0 {
                                             attacked_piece.delete = true;
                                         }
                                     }
                                 }
                                 let piece = &mut pieces[index];
-                                if piece_attacked {
-                                    piece.health -= damage;
-                                }
+                                piece.health -= total_damage;
                                 if piece.health <= 0 {
                                     piece.delete = true;
                                 }
@@ -549,7 +570,7 @@ fn main() {
                                     if piece.pos == sq {
                                         for offset in &[[-1, -1], [0, -1], [1, -1], [2, -1], [2, 0], [2, 1], [2, 2], [1, 2], [0, 2], [-1, 2], [-1, 1], [-1, 0]] {
                                             for damaged_piece in &mut pieces {
-                                                if damaged_piece.pos == (Square {rank: add_usize_int(sq.rank, offset[0]), file: add_usize_int(sq.file ,offset[1])}) {
+                                                if does_piece_block_square(damaged_piece, Square {rank: add_usize_int(sq.rank, offset[0]), file: add_usize_int(sq.file ,offset[1])}, false) {
                                                     damaged_piece.health -= 1;
                                                     if damaged_piece.health <= 0 {
                                                         damaged_piece.delete = true;
@@ -560,23 +581,22 @@ fn main() {
                                     }
                                 },
                                 Action::Move(mv) => {
+                                    let big = matches!(pieces[index].kind, Kind::B);
                                     if pieces[index].pos == mv.start {
                                         let mut damage = pieces[index].health;
-                                        let mut piece_attacked = false;
+                                        let mut total_damage = 0;
                                         for attacked_piece in &mut pieces {
-                                            if attacked_piece.pos == mv.end {
+                                            if attacked_piece.color != curr_game_turn && does_piece_block_square(attacked_piece, mv.end, big) {
                                                 damage = cmp::min(damage, attacked_piece.health);
-                                                piece_attacked = true;
                                                 attacked_piece.health -= damage;
+                                                total_damage += damage;
                                                 if attacked_piece.health <= 0 {
                                                     attacked_piece.delete = true;
                                                 }
                                             }
                                         }
                                         let piece = &mut pieces[index];
-                                        if piece_attacked {
-                                            piece.health -= damage;
-                                        }
+                                        piece.health -= total_damage;
                                         if piece.health <= 0 {
                                             piece.delete = true;
                                         }
